@@ -12,8 +12,14 @@ import tkinter as tk
 from tkinter import filedialog
 import matplotlib.pyplot as plt
 from viewer_3d_gui import SliceViewer3D
+from ANNmodel import build_full_model, HybridLoss
 import threading
 import multiprocessing
+import tensorflow as tf
+from keras import layers, models, losses, optimizers, Input
+from keras import backend as K
+import numpy as np
+
 
 def load_dicom_series(folder_path):
     dicom_files = [pydicom.dcmread(os.path.join(folder_path, f)) 
@@ -66,26 +72,19 @@ def launch_viewers(volumes_with_titles):
         p.join()
 # 2つのGUIを同時に起動（必要に応じて増やせます）
 
-def main():
-    dir_simCT = r'C:/Users/Kanai/Synology/TWMU/0_張先生_共同研究_MRI阻止能/FromIzo/phantoms/simCT_80kVp/'
-    dir_theoCT = r'C:/Users/Kanai/Synology/TWMU/0_張先生_共同研究_MRI阻止能/FromIzo/phantoms/theoCT_80kVp/'
+dir_simCT = r'C:/Users/Kanai/Synology/TWMU/0_張先生_共同研究_MRI阻止能/FromIzo/phantoms/simCT_80kVp/'
+dir_theoCT = r'C:/Users/Kanai/Synology/TWMU/0_張先生_共同研究_MRI阻止能/FromIzo/phantoms/theoCT_80kVp/'
+
+print("DICOM読み込み中...")
+simCT = load_dicom_series(dir_simCT)
+theoCT = load_npz_as_array(dir_theoCT)
+
+# volumes_with_titles = [
+#     (simCT, "Simulated CT"),
+#     (theoCT, "Theoretical CT")
+# ]
+# launch_viewers(volumes_with_titles)
     
-    print("DICOM読み込み中...")
-    simCT = load_dicom_series(dir_simCT)
-    theoCT = load_npz_as_array(dir_theoCT)
-    
-    volumes_with_titles = [
-        (simCT, "Simulated CT"),
-        (theoCT, "Theoretical CT")
-    ]
-    launch_viewers(volumes_with_titles)
-    
-if __name__ == "__main__":
-    try:
-        multiprocessing.set_start_method("spawn")
-    except RuntimeError:
-        pass
-    main()
 
 
 ## ファイルを読み込む
@@ -104,3 +103,25 @@ if __name__ == "__main__":
 #arr = data['arr_0']
 #
 #
+
+# --- ハイパーパラメータ ---
+input_dim = (7,1)  # MRI+DECTチャネル数: T1DF, T1DW, T2-STIR, HighE, LowE, ρₑ, VMI
+delta = 1e-6    # 1: physics-constrained loss, 0: standard loss
+
+
+
+# --- モデルコンパイル ---
+model = build_full_model(input_dim)
+loss_fn = HybridLoss(delta=delta, z_3_62=7.0, z_1_86=6.5)  # 実験値で調整
+model.compile(optimizer=optimizers.Adam(lr=1e-4), loss=loss_fn)
+
+# --- ダミーデータでテスト ---
+n_vox = 1000
+X_dummy = np.random.rand(n_vox, input_dim[0], 1).astype(np.float32)
+rho_gt = np.random.uniform(0.8, 2.0, size=(n_vox, 1)).astype(np.float32)
+ct_gt = np.random.uniform(-100, 2000, size=(n_vox, 1)).astype(np.float32)
+y_dummy = np.concatenate([rho_gt, ct_gt], axis=-1)
+
+# --- 学習 ---
+model.fit(X_dummy, y_dummy, epochs=5)
+
